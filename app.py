@@ -1,10 +1,25 @@
 import streamlit as st
 import io
+import os
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 # --- ページの設定 ---
 st.set_page_config(page_title="設備設計熱計算総合ツール", layout="wide")
+
+# ==========================================================================================
+# ★ 新機能：会社ロゴの挿入（ファイルの存在チェック付き）
+# ==========================================================================================
+# app.pyと同じフォルダに「company_logo.png」という名前でロゴ画像を置いてください
+logo_filename = "company_logo.png"
+
+if os.path.exists(logo_filename):
+    # 画像を表示（width=250 でロゴの横幅を250ピクセルに調整しています。お好みで数値を変更してください）
+    st.image(logo_filename, width=250)
+else:
+    # 画像がない場合は、開発・テスト用に簡易的なテキストアイコンを表示します
+    st.caption("🏢 [ここに company_logo.png を配置するとロゴ画像に切り替わります]")
+
 st.title("🏢 設備設計熱計算総合ツール")
 
 # --- トップタブの設置 ---
@@ -162,7 +177,7 @@ with tab_reito:
 
 
 # ==========================================================================================
-# ★ タブ2：空調設備 負荷計算・選定 (注釈ヘルプ目安を追加)
+# ★ タブ2：空調設備 負荷計算・選定
 # ==========================================================================================
 with tab_kucho:
     AIR_DENSITY_MASTER = {
@@ -200,7 +215,6 @@ with tab_kucho:
                 load_density = AIR_DENSITY_MASTER[usage_type]
                 k_margin = st.number_input("安全率（余裕率）", value=1.10, step=0.05, key="k_margin_a")
 
-        # --- パターンB：ご指示いただいた目安注釈(help)を実装したエリア ---
         else:
             with st.expander("② 構造体侵入熱の設定（ガラス・壁面）", expanded=True):
                 st.caption("外気温と室内設計温度")
@@ -214,7 +228,6 @@ with tab_kucho:
                 st.caption("ガラス窓の条件")
                 k_glass_area = st.number_input("ガラス窓の総面積 (m²)", value=12.0, step=1.0)
                 
-                # ★窓面係数の目安注釈を実装
                 k_glass_heat = st.number_input(
                     "窓面の日射・通過熱量係数 (W/m²)", 
                     value=350.0, 
@@ -235,7 +248,6 @@ with tab_kucho:
                 st.caption("外壁・天井の条件")
                 k_wall_area = (2 * (k_width + k_length) * k_height) - k_glass_area + k_area 
                 
-                # ★外壁・天井U値の目安注釈を実装
                 k_wall_u = st.number_input(
                     "外壁・天井の平均熱貫流率 U値 [W/(m²・K)]", 
                     value=0.85, 
@@ -271,7 +283,7 @@ with tab_kucho:
                 else:
                     k_vent_vol = st.number_input("必要換気量 (m³/h) [手動]", value=360.0, step=10.0)
                     
-                k_vent_enthalpy = st.number_input("外気処理の熱量係数 (W / (m³/h))", value=11.5, step=0.5, help="外気と室内の温湿度差（エンタルピー差）を処理する係数")
+                k_vent_enthalpy = st.number_input("外気処理の熱量係数 (W / (m³/h))", value=11.5, step=0.5, key="k_vent_ent")
                 k_margin = st.number_input("安全率（余裕率）", value=1.15, step=0.05, key="k_margin_b")
 
     with col_k_res:
