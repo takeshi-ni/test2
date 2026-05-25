@@ -8,10 +8,9 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 st.set_page_config(page_title="設備設計熱計算総合ツール", layout="wide")
 
 # ==========================================================================================
-# ★ 会社ロゴの挿入（ファイルの存在チェック付き）
+# ★ 会社ロゴの挿入
 # ==========================================================================================
 logo_filename = "company_logo.png"
-
 if os.path.exists(logo_filename):
     st.image(logo_filename, width=250)
 else:
@@ -99,13 +98,18 @@ with tab_reito:
             st.subheader("入庫量・重量の設定")
             q4_mode = st.radio("入庫品重量(W) の計算方法", ["収容率・収容量から算出（自動）", "直接入力（手動）"], horizontal=True, key="r_wmode")
             
+            # ★バグ修正箇所：自動と手動で完全に変数を切り離し、数値を強制上書きする
             col_w1, col_w2 = st.columns(2)
             with col_w1:
                 storage_rate = st.number_input("収容率 (%)", value=60.0, step=5.0, key="r_sr")
                 turnover_rate = st.number_input("入出庫率 (%)", value=33.0, step=1.0, key="r_tr")
             with col_w2:
                 calc_w = capacity_ton * 1000 * (storage_rate / 100.0) * (turnover_rate / 100.0)
-                w_weight = st.number_input("入庫品重量 W (kg)", value=float(round(calc_w, 1)), disabled=(q4_mode=="収容率・収容量から算出（自動）"), key="r_w_wt")
+                if q4_mode == "収容率・収容量から算出（自動）":
+                    w_weight = float(round(calc_w, 1))
+                    st.number_input("入庫品重量 W (kg) [自動連動中]", value=w_weight, disabled=True, key="r_w_wt_auto")
+                else:
+                    w_weight = st.number_input("入庫品重量 W (kg) [手動入力]", value=4621.0, step=100.0, key="r_w_wt_man")
 
             h_cooling = st.number_input("入庫物冷却時間 H (時間)", value=24.0, step=1.0, key="r_hc")
 
@@ -113,14 +117,23 @@ with tab_reito:
             st.subheader("《換気負荷》 (Q2)")
             q2_mode = st.radio("換気回数(N) の設定", ["自動", "手動"], horizontal=True, key="r_q2m")
             default_n = 15.0 if volume < 20 else (10.9 if volume < 50 else (7.5 if volume < 100 else 5.0))
-            v_cycles = st.number_input("換気回数 N (回/24h)", value=default_n, disabled=(q2_mode=="自動"), key="r_vc")
+            if q2_mode == "自動":
+                v_cycles = default_n
+                st.number_input("換気回数 N (回/24h) [自動連動中]", value=v_cycles, disabled=True, key="r_vc_auto")
+            else:
+                v_cycles = st.number_input("換気回数 N (回/24h) [手動]", value=10.9, step=0.1, key="r_vc_man")
             e_vent = st.number_input("換気熱量 E (W/m³)", value=34.5, step=0.1, key="r_ev")
             
             st.markdown("---")
             st.subheader("《作業員負荷》 (Q3)")
             q3_mode = st.radio("作業人数 の設定", ["自動", "手動"], horizontal=True, key="r_q3m")
             calc_p_count = max(0.1, round(volume / 250.0, 1))
-            p_count = st.number_input("作業人数 D (人)", value=float(calc_p_count), disabled=(q3_mode=="自動"), format="%.1f", key="r_pc")
+            if q3_mode == "自動":
+                p_count = float(calc_p_count)
+                st.number_input("作業人数 D (人) [自動連動中]", value=p_count, disabled=True, format="%.1f", key="r_pc_auto")
+            else:
+                p_count = st.number_input("作業人数 D (人) [手動]", value=0.2, step=0.1, format="%.1f", key="r_pc_man")
+                
             p_heat = st.number_input("作業員発生熱量 F (W/人)", value=410.0, step=10.0, key="r_ph")
             p_hours = st.number_input("作業時間 H (時間)", value=3.0, step=0.5, key="r_p_hr")
             
@@ -128,7 +141,11 @@ with tab_reito:
             st.subheader("《電灯負荷》 (Q5)")
             q5_mode = st.radio("電灯総負荷 の設定", ["自動", "手動"], horizontal=True, key="r_q5m")
             calc_light_kw = max(1.0, round(volume / 40.0, 1)) * 0.1
-            light_kw = st.number_input("電灯総負荷 (kW)", value=float(calc_light_kw), disabled=(q5_mode=="自動"), format="%.2f", key="r_lkw")
+            if q5_mode == "自動":
+                light_kw = float(calc_light_kw)
+                st.number_input("電灯総負荷 (kW) [自動連動中]", value=light_kw, disabled=True, format="%.2f", key="r_lkw_auto")
+            else:
+                light_kw = st.number_input("電灯総負荷 (kW) [手動]", value=0.10, step=0.01, format="%.2f", key="r_lkw_man")
             light_hours = st.number_input("照明時間 H (時間)", value=3.0, step=0.5, key="r_lhr")
             
             st.markdown("---")
@@ -171,9 +188,6 @@ with tab_reito:
             "計算値 (kW)": [f"{Q1:.2f}", f"{Q2:.2f}", f"{Q3:.2f}", f"{Q4:.2f}", f"{Q5:.2f}", f"{sum_Q:.2f}"]
         })
 
-        # =================================================================
-        # ★ 新機能：冷却能力(Q)の計算式プロセスの明記
-        # =================================================================
         st.info(f"💡 **必要とされる冷却能力 (Q) の計算プロセス**\n\n"
                 f"**【計算式】 (諸負荷単純合計 × 24 / (24 - 霜取時間)) × 安全率**\n\n"
                 f"＝ ({sum_Q:.2f} kW × 24 / (24 - {defrost_hours:.1f} h)) × {margin_rate:.2f} \n\n"
@@ -283,9 +297,10 @@ with tab_kucho:
             with st.expander("④ 外気処理負荷の設定（換気）", expanded=True):
                 k_vent_mode = st.radio("換気量の設定", ["自動（1人あたり30m³/h）", "手動入力"], horizontal=True)
                 if k_vent_mode == "自動（1人あたり30m³/h）":
-                    k_vent_vol = st.number_input("必要換気量 (m³/h)", value=float(k_people * 30), disabled=True)
+                    k_vent_vol = float(k_people * 30)
+                    st.number_input("必要換気量 (m³/h) [自動連動中]", value=k_vent_vol, disabled=True, key="k_vent_auto")
                 else:
-                    k_vent_vol = st.number_input("必要換気量 (m³/h) [手動]", value=360.0, step=10.0)
+                    k_vent_vol = st.number_input("必要換気量 (m³/h) [手動]", value=360.0, step=10.0, key="k_vent_man")
                     
                 k_vent_enthalpy = st.number_input("外気処理の熱量係数 (W / (m³/h))", value=11.5, step=0.5, key="k_vent_ent")
                 k_margin = st.number_input("安全率（余裕率）", value=1.15, step=0.05, key="k_margin_b")
