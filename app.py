@@ -50,7 +50,7 @@ with tab_reito:
             volume = width * length * height
             floor_area = width * length
             capacity_ton = volume * 0.40102
-            st.info(f"💡 計算値：床面積 {floor_area:.1f} m² / 内容積 {volume:.1f} m³ / 収容能力 {capacity_ton:.1f} トン")
+            st.info(f"💡 計算値：床面積 {floor_area:.1f} m² / 内容積 {volume:.1f} m³ / 収容能力目安 {capacity_ton:.1f} トン")
 
         with st.expander("② 各部断熱・周囲温度設定", expanded=False):
             panel_type = st.selectbox("パネル厚み選択", ["冷凍 100mm (K=0.21)", "冷蔵 50mm (K=0.42)", "手入力"], key="r_p")
@@ -98,18 +98,20 @@ with tab_reito:
             st.subheader("入庫量・重量の設定")
             q4_mode = st.radio("入庫品重量(W) の計算方法", ["収容率・収容量から算出（自動）", "直接入力（手動）"], horizontal=True, key="r_wmode")
             
-            # ★バグ修正箇所：自動と手動で完全に変数を切り離し、数値を強制上書きする
             col_w1, col_w2 = st.columns(2)
             with col_w1:
+                storage_density = st.number_input("収容量 (kg/m³)", value=600.0, step=10.0, key="r_sd")
                 storage_rate = st.number_input("収容率 (%)", value=60.0, step=5.0, key="r_sr")
-                turnover_rate = st.number_input("入出庫率 (%)", value=33.0, step=1.0, key="r_tr")
             with col_w2:
-                calc_w = capacity_ton * 1000 * (storage_rate / 100.0) * (turnover_rate / 100.0)
+                turnover_rate = st.number_input("入出庫率 (%)", value=33.0, step=1.0, key="r_tr")
+                # 三菱ロジック: 容積 × 収容量(kg/m3) × 収容率 × 入出庫率
+                calc_w = volume * storage_density * (storage_rate / 100.0) * (turnover_rate / 100.0)
+                
                 if q4_mode == "収容率・収容量から算出（自動）":
                     w_weight = float(round(calc_w, 1))
                     st.number_input("入庫品重量 W (kg) [自動連動中]", value=w_weight, disabled=True, key="r_w_wt_auto")
                 else:
-                    w_weight = st.number_input("入庫品重量 W (kg) [手動入力]", value=4621.0, step=100.0, key="r_w_wt_man")
+                    w_weight = st.number_input("入庫品重量 W (kg) [手動入力]", value=1925.0, step=100.0, key="r_w_wt_man")
 
             h_cooling = st.number_input("入庫物冷却時間 H (時間)", value=24.0, step=1.0, key="r_hc")
 
@@ -160,13 +162,23 @@ with tab_reito:
         Q3 = p_heat * p_count * p_hours * (1.0 / 24.0) / 1000.0
         Q5 = light_kw * light_hours * (1.0 / 24.0)
 
-        if t_in > t_f:
-            q_sens1 = w_weight * c1 * (t_in - t_f)
-            q_latent = w_weight * q_f
-            q_sens2 = w_weight * c2 * (t_f - t_int)
-            Q4 = (q_sens1 + q_latent + q_sens2) * (1.0 / 3600.0) * (1.0 / h_cooling)
+        # ★バグ修正：庫内温度(t_int)を基準にして冷蔵(凍らない)と冷凍(凍る)を正しく分岐
+        if t_int >= t_f:
+            # 冷蔵帯：凍結しないため潜熱は発生せず、顕熱1（c1）のみで計算
+            q_sens1 = w_weight * c1 * max(0.0, t_in - t_int)
+            Q4 = q_sens1 * (1.0 / 3600.0) * (1.0 / h_cooling)
+            st.caption("※庫内設定温度が凍結点以上のため、冷蔵（顕熱のみ）として計算しています")
         else:
-            Q4 = w_weight * c2 * (t_in - t_int) * (1.0 / 3600.0) * (1.0 / h_cooling)
+            # 冷凍帯：凍結点未満まで冷やし込む
+            if t_in > t_f:
+                # 顕熱1＋潜熱＋顕熱2 のフル計算
+                q_sens1 = w_weight * c1 * (t_in - t_f)
+                q_latent = w_weight * q_f
+                q_sens2 = w_weight * c2 * (t_f - t_int)
+                Q4 = (q_sens1 + q_latent + q_sens2) * (1.0 / 3600.0) * (1.0 / h_cooling)
+            else:
+                # すでに凍結した状態での追冷
+                Q4 = w_weight * c2 * max(0.0, t_in - t_int) * (1.0 / 3600.0) * (1.0 / h_cooling)
 
         sum_Q = Q1 + Q2 + Q3 + Q4 + Q5 + Q6
         defrost_hours = 2.0
@@ -192,6 +204,75 @@ with tab_reito:
                 f"**【計算式】 (諸負荷単純合計 × 24 / (24 - 霜取時間)) × 安全率**\n\n"
                 f"＝ ({sum_Q:.2f} kW × 24 / (24 - {defrost_hours:.1f} h)) × {margin_rate:.2f} \n\n"
                 f"＝ **{final_Q:.2f} kW**")
+
+        # =================================================================
+        # ★ 復活：冷凍冷蔵用のExcel出力関数
+        # =================================================================
+        def generate_reito_excel():
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.title = "冷蔵庫負荷計算書"
+            ws.views.sheetView[0].showGridLines = True
+            
+            font_title = Font(name="MS ゴシック", size=14, bold=True)
+            font_header = Font(name="MS ゴシック", size=11, bold=True, color="FFFFFF")
+            font_bold = Font(name="MS ゴシック", size=11, bold=True)
+            font_normal = Font(name="MS ゴシック", size=11)
+            fill_blue = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+            thin_side = Side(border_style="thin", color="000000")
+            border_box = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+            
+            ws["A1"] = "***** 冷蔵庫の負荷計算書 *****"
+            ws["A1"].font = font_title
+            
+            ws["A3"] = "【計算基本条件】"
+            ws["A3"].font = font_bold
+            ws["A4"] = "部屋寸法"; ws["B4"] = f"{width:.1f}m × {length:.1f}m × {height:.1f}m"
+            ws["A5"] = "内容積"; ws["B5"] = f"{volume:.1f} m³"
+            ws["A6"] = "庫内温度"; ws["B6"] = f"{t_int:.1f} ℃"
+            ws["A7"] = "入庫品温度"; ws["B7"] = f"{t_in:.1f} ℃"
+            ws["A8"] = "入庫重量"; ws["B8"] = f"{w_weight:.1f} kg"
+            
+            ws.cell(row=10, column=1, value="負荷内訳項目").font = font_header
+            ws.cell(row=10, column=1).fill = fill_blue
+            ws.cell(row=10, column=2, value="計算値 (kW)").font = font_header
+            ws.cell(row=10, column=2).fill = fill_blue
+            
+            results = [
+                ("① 壁等からの侵入熱 (Q1)", Q1),
+                ("② 換気による負荷 (Q2)", Q2),
+                ("③ 作業員による負荷 (Q3)", Q3),
+                ("④ 物品冷却負荷 (Q4)", Q4),
+                ("⑤ 電灯の負荷 (Q5)", Q5),
+                ("⑥ オプション負荷 (Q6)", Q6),
+                ("■ 諸負荷単純合計", sum_Q)
+            ]
+            
+            r_idx = 11
+            for item, val in results:
+                ws.cell(row=r_idx, column=1, value=item).font = font_normal
+                ws.cell(row=r_idx, column=2, value=round(val, 2)).font = font_bold
+                r_idx += 1
+                
+            ws.cell(row=r_idx+1, column=1, value="🚀 必要総冷却能力 (Q)").font = font_bold
+            ws.cell(row=r_idx+1, column=2, value=round(final_Q, 2)).font = font_bold
+            
+            ws.column_dimensions["A"].width = 35
+            ws.column_dimensions["B"].width = 20
+            
+            output = io.BytesIO()
+            wb.save(output)
+            output.seek(0)
+            return output
+
+        st.markdown("---")
+        r_excel = generate_reito_excel()
+        st.download_button(
+            label="📥 冷凍冷蔵の計算結果をExcel出力する",
+            data=r_excel,
+            file_name="冷凍冷蔵設備_負荷計算書.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 
 # ==========================================================================================
